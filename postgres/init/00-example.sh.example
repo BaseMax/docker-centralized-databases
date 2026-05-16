@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# postgres/init/00-example.sh.example
+# ─────────────────────────────────────────────────────────────────────────────
+# HOW TO USE
+# ─────────────────────────────────────────────────────────────────────────────
+# 1. Copy this file and remove the .example suffix:
+#      cp postgres/init/00-example.sh.example postgres/init/01-my-project.sh
+#
+# 2. Replace every placeholder (MY_PROJECT, MY_PROJECT_USER, MY_PASSWORD)
+#    with real values.  Use a unique, strong password per project.
+#
+# 3. Make the script executable:
+#      chmod +x postgres/init/01-my-project.sh
+#
+# 4. Init scripts run automatically only on first container start (when the
+#    postgres-data volume is empty).  To re-apply after the volume exists,
+#    run the SQL manually via pgAdmin or psql:
+#
+#      docker exec -it centralized-postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"
+#
+# 5. Keep the numbered prefix (01-, 02-, …) to control execution order.
+# ─────────────────────────────────────────────────────────────────────────────
+set -e
+
+# Create a dedicated database user (replace MY_PROJECT_USER and MY_PASSWORD)
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    CREATE USER MY_PROJECT_USER
+        WITH ENCRYPTED PASSWORD 'MY_PASSWORD';
+EOSQL
+
+# Create the project database owned by the new user
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+    CREATE DATABASE MY_PROJECT
+        OWNER       MY_PROJECT_USER
+        ENCODING    'UTF8'
+        LC_COLLATE  'en_US.utf8'
+        LC_CTYPE    'en_US.utf8'
+        TEMPLATE    template0;
+EOSQL
+
+# Grant schema-level permissions (required in PostgreSQL 15+)
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "MY_PROJECT" <<-EOSQL
+    GRANT ALL ON SCHEMA public TO MY_PROJECT_USER;
+EOSQL

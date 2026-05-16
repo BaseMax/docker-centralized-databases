@@ -1,44 +1,65 @@
-# docker-compose.yml
 # Docker Centralized Databases
 # Copyright (c) 2026 Seyyed Ali Mohammadiyeh (Max Base)
 # https://github.com/BaseMax/docker-centralized-databases
+#
+# ── Profiles ─────────────────────────────────────────────────────────────────
+# Every service is opt-in via a Docker Compose profile.
+# Set COMPOSE_PROFILES in your .env to choose what runs, e.g.:
+#
+#   COMPOSE_PROFILES=mariadb,phpmyadmin,redis,redisinsight
+#   COMPOSE_PROFILES=postgres,pgadmin,adminer
+#   COMPOSE_PROFILES=mariadb,postgres,redis,adminer,redisinsight
+#
+# Available profiles:
+#   mariadb       – MariaDB server
+#   phpmyadmin    – phpMyAdmin UI  (for MariaDB)
+#   postgres      – PostgreSQL server
+#   pgadmin       – pgAdmin 4 UI  (for PostgreSQL)
+#   adminer       – Adminer UI    (universal: MariaDB + PostgreSQL)
+#   redis         – Redis server
+#   redisinsight  – Redis Insight UI
+# ─────────────────────────────────────────────────────────────────────────────
 
 networks:
-  # External-facing network: other project containers join this to reach MariaDB & Redis
+  # Shared network – other project containers join this to reach any database
   db-network:
     name: centralized-db-network
     driver: bridge
 
-  # Internal-only network: used solely for admin UIs to reach the databases
+  # Private network – only admin UIs talk across this; project containers never join it
   admin-network:
     driver: bridge
 
 volumes:
   mariadb-data:
     driver: local
+  postgres-data:
+    driver: local
   redis-data:
     driver: local
   redisinsight-data:
+    driver: local
+  pgadmin-data:
     driver: local
 
 services:
 
   # ── MariaDB ──────────────────────────────────────────────────────────────────
   mariadb:
-    image: mariadb:11
+    image: mariadb:latest
     container_name: centralized-mariadb
+    profiles: [mariadb]
     restart: unless-stopped
     environment:
-      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD:?MARIADB_ROOT_PASSWORD is required – copy .env.example to .env}
+      MARIADB_ROOT_PASSWORD: ${MARIADB_ROOT_PASSWORD}
       MARIADB_DATABASE: ${MARIADB_DATABASE:-app}
       MARIADB_USER: ${MARIADB_USER:-app_user}
-      MARIADB_PASSWORD: ${MARIADB_PASSWORD:?MARIADB_PASSWORD is required}
+      MARIADB_PASSWORD: ${MARIADB_PASSWORD}
     volumes:
       - mariadb-data:/var/lib/mysql
       - ./mariadb/conf.d:/etc/mysql/conf.d:ro
       - ./mariadb/init:/docker-entrypoint-initdb.d:ro
     ports:
-      # Bind to localhost only so the port is never reachable from outside the host
       - "${MARIADB_HOST:-127.0.0.1}:${MARIADB_PORT:-3306}:3306"
     networks:
       - db-network
@@ -56,21 +77,21 @@ services:
       context: ./phpmyadmin
       dockerfile: Dockerfile
     container_name: centralized-phpmyadmin
+    profiles: [phpmyadmin]
     restart: unless-stopped
     depends_on:
       mariadb:
+        # required: false → if mariadb profile is not active, skip silently
         condition: service_healthy
+        required: false
     environment:
       PMA_HOST: mariadb
       PMA_PORT: 3306
-      # Prevent connecting to arbitrary servers (security hardening)
       PMA_ARBITRARY: "0"
-      # PHP settings – all controlled via environment variables
       UPLOAD_LIMIT: ${PMA_MAX_UPLOAD_SIZE:-256M}
       MAX_EXECUTION_TIME: ${PMA_MAX_EXECUTION_TIME:-600}
       MEMORY_LIMIT: ${PMA_MEMORY_LIMIT:-512M}
     ports:
-      # Always bind admin UIs to localhost – never expose to the network
       - "127.0.0.1:${PHPMYADMIN_PORT:-8080}:80"
     networks:
       - admin-network
@@ -81,18 +102,89 @@ services:
       retries: 3
       start_period: 30s
 
+  # ── PostgreSQL ───────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:alpine
+    container_name: centralized-postgres
+    profiles: [postgres]
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-app}
+      POSTGRES_USER: ${POSTGRES_USER:-app_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/conf/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${POSTGRES_HOST:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - db-network
+      - admin-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app_user} -d ${POSTGRES_DB:-app}"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ── pgAdmin 4 ────────────────────────────────────────────────────────────────
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: centralized-pgadmin
+    profiles: [pgadmin]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@example.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+      # Disable master-password prompt for a smoother local experience
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    ports:
+      - "127.0.0.1:${PGADMIN_PORT:-5050}:80"
+    networks:
+      - admin-network
+
+  # ── Adminer (universal DB UI) ─────────────────────────────────────────────────
+  adminer:
+    image: adminer:latest
+    container_name: centralized-adminer
+    profiles: [adminer]
+    restart: unless-stopped
+    # Adminer can reach whichever databases are active; both deps are optional
+    depends_on:
+      mariadb:
+        condition: service_healthy
+        required: false
+      postgres:
+        condition: service_healthy
+        required: false
+    environment:
+      # Default server shown on the login form (change to "postgres" if preferred)
+      ADMINER_DEFAULT_SERVER: ${ADMINER_DEFAULT_SERVER:-mariadb}
+    ports:
+      - "127.0.0.1:${ADMINER_PORT:-8081}:8080"
+    networks:
+      - admin-network
+
   # ── Redis ────────────────────────────────────────────────────────────────────
   redis:
-    image: redis:7-alpine
+    image: redis:alpine
     container_name: centralized-redis
+    profiles: [redis]
     restart: unless-stopped
-    # Password is passed via CLI so it is read from the environment and never
-    # stored as plain text inside the image or the config file.
+    # Password injected via CLI so it is never stored as plain text in redis.conf
     command: >
       redis-server /usr/local/etc/redis/redis.conf
-      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      --requirepass ${REDIS_PASSWORD}
     environment:
-      # Expose to container environment so the healthcheck can use it
+      # Also exposed as env var so the healthcheck can reference it at runtime
       REDIS_PASSWORD: ${REDIS_PASSWORD}
     volumes:
       - redis-data:/data
@@ -103,8 +195,7 @@ services:
       - db-network
       - admin-network
     healthcheck:
-      # $$REDIS_PASSWORD → Docker Compose escapes $$ → $REDIS_PASSWORD evaluated
-      # inside the container at runtime (from the environment section above).
+      # $$REDIS_PASSWORD: $$ → $ after Compose escaping, evaluated inside container
       test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
       interval: 30s
       timeout: 10s
@@ -115,10 +206,12 @@ services:
   redisinsight:
     image: redis/redisinsight:latest
     container_name: centralized-redisinsight
+    profiles: [redisinsight]
     restart: unless-stopped
     depends_on:
       redis:
         condition: service_healthy
+        required: false
     volumes:
       - redisinsight-data:/data
     ports:
