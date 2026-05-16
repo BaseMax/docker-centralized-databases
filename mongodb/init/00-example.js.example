@@ -1,0 +1,32 @@
+// mongodb/init/00-example.js.example
+// ─────────────────────────────────────────────────────────────────────────────
+// HOW TO USE
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. Copy this file and remove the .example suffix:
+//      cp mongodb/init/00-example.js.example mongodb/init/01-my-project.js
+//
+// 2. Replace every placeholder (MY_PROJECT, MY_USER, MY_PASSWORD) with real
+//    values. Use a unique, strong password per project.
+//
+// 3. Init scripts run only when the mongodb-data volume is empty (first start).
+//    To re-run after the volume exists, apply changes manually via Mongo Express
+//    or the mongo shell:
+//      docker exec -it centralized-mongodb mongosh -u "$MONGO_ROOT_USER" -p "$MONGO_ROOT_PASSWORD" --authenticationDatabase admin
+//
+// 4. Keep the numbered prefix (01-, 02-, …) to control execution order.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Switch to (or create) the project database
+db = db.getSiblingDB('MY_PROJECT');
+
+// Create a dedicated user with read/write access only to this database
+db.createUser({
+  user: 'MY_USER',
+  pwd:  'MY_PASSWORD',
+  roles: [
+    { role: 'readWrite', db: 'MY_PROJECT' }
+  ]
+});
+
+// Create an initial collection so the database is properly initialised
+db.createCollection('_init');

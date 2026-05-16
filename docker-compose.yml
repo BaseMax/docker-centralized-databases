@@ -11,13 +11,21 @@
 #   COMPOSE_PROFILES=mariadb,postgres,redis,adminer,redisinsight
 #
 # Available profiles:
-#   mariadb       – MariaDB server
-#   phpmyadmin    – phpMyAdmin UI  (for MariaDB)
-#   postgres      – PostgreSQL server
-#   pgadmin       – pgAdmin 4 UI  (for PostgreSQL)
-#   adminer       – Adminer UI    (universal: MariaDB + PostgreSQL)
-#   redis         – Redis server
-#   redisinsight  – Redis Insight UI
+#   mariadb        – MariaDB server          (MySQL-compatible relational DB)
+#   phpmyadmin     – phpMyAdmin UI           (web admin for MariaDB)
+#   postgres       – PostgreSQL server       (advanced relational DB)
+#   pgadmin        – pgAdmin 4 UI            (web admin for PostgreSQL)
+#   adminer        – Adminer UI              (universal: MariaDB + PostgreSQL)
+#   mongodb        – MongoDB server          (NoSQL document database)
+#   mongo-express  – Mongo Express UI        (web admin for MongoDB)
+#   clickhouse     – ClickHouse server       (OLAP / analytics; Play UI at :8123/play)
+#   influxdb       – InfluxDB server         (time-series; built-in UI at :8086)
+#   memcached      – Memcached               (in-memory key-value cache)
+#   elasticsearch  – Elasticsearch server    (full-text search & analytics)
+#   kibana         – Kibana UI               (web admin for Elasticsearch)
+#   neo4j          – Neo4j server            (graph database; browser UI at :7474)
+#   redis          – Redis server            (in-memory key-value store)
+#   redisinsight   – Redis Insight UI        (web admin for Redis)
 # ─────────────────────────────────────────────────────────────────────────────
 
 networks:
@@ -35,11 +43,25 @@ volumes:
     driver: local
   postgres-data:
     driver: local
+  mongodb-data:
+    driver: local
+  clickhouse-data:
+    driver: local
+  influxdb-data:
+    driver: local
+  elasticsearch-data:
+    driver: local
+  neo4j-data:
+    driver: local
+  neo4j-logs:
+    driver: local
   redis-data:
     driver: local
   redisinsight-data:
     driver: local
   pgadmin-data:
+    driver: local
+  kibana-data:
     driver: local
 
 services:
@@ -218,3 +240,230 @@ services:
       - "127.0.0.1:${REDISINSIGHT_PORT:-5540}:5540"
     networks:
       - admin-network
+
+  # ── MongoDB ───────────────────────────────────────────────────────────────────
+  mongodb:
+    image: mongo:latest
+    container_name: centralized-mongodb
+    profiles: [mongodb]
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE:-app}
+      # Re-exposed so the healthcheck can reference them at runtime via $$VAR
+      MONGO_ROOT_USER: ${MONGO_ROOT_USER:-root}
+      MONGO_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+    volumes:
+      - mongodb-data:/data/db
+      - ./mongodb/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "${MONGO_HOST:-127.0.0.1}:${MONGO_PORT:-27017}:27017"
+    networks:
+      - db-network
+      - admin-network
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --host 127.0.0.1 -u \"$$MONGO_ROOT_USER\" -p \"$$MONGO_ROOT_PASSWORD\" --authenticationDatabase admin --eval \"db.adminCommand('ping').ok\" --quiet 2>/dev/null | tail -1 | grep -q 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ── Mongo Express ─────────────────────────────────────────────────────────────
+  mongo-express:
+    image: mongo-express:latest
+    container_name: centralized-mongo-express
+    profiles: [mongo-express]
+    restart: unless-stopped
+    depends_on:
+      mongodb:
+        condition: service_healthy
+        required: false
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: ${MONGO_ROOT_USER:-root}
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ${MONGO_ROOT_PASSWORD}
+      ME_CONFIG_MONGODB_URL: mongodb://${MONGO_ROOT_USER:-root}:${MONGO_ROOT_PASSWORD}@mongodb:27017/
+      # Basic-auth protecting the Mongo Express web UI
+      ME_CONFIG_BASICAUTH: "true"
+      ME_CONFIG_BASICAUTH_USERNAME: ${MONGO_EXPRESS_USER:-admin}
+      ME_CONFIG_BASICAUTH_PASSWORD: ${MONGO_EXPRESS_PASSWORD}
+    ports:
+      - "127.0.0.1:${MONGO_EXPRESS_PORT:-8082}:8081"
+    networks:
+      - admin-network
+
+  # ── ClickHouse ────────────────────────────────────────────────────────────────
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest
+    container_name: centralized-clickhouse
+    profiles: [clickhouse]
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-default}
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER:-admin}
+      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./clickhouse/config/config.d:/etc/clickhouse-server/config.d:ro
+      - ./clickhouse/users/users.d:/etc/clickhouse-server/users.d:ro
+    ports:
+      # HTTP interface + built-in Play UI at http://localhost:8123/play
+      - "${CLICKHOUSE_HOST:-127.0.0.1}:${CLICKHOUSE_HTTP_PORT:-8123}:8123"
+      # Native TCP protocol (used by clickhouse-client and most drivers)
+      - "${CLICKHOUSE_HOST:-127.0.0.1}:${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
+    networks:
+      - db-network
+      - admin-network
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8123/ping | grep -q 'Ok.'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ── InfluxDB ──────────────────────────────────────────────────────────────────
+  influxdb:
+    image: influxdb:alpine
+    container_name: centralized-influxdb
+    profiles: [influxdb]
+    restart: unless-stopped
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_USER:-admin}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_PASSWORD}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG:-my-org}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET:-default}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN}
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    ports:
+      # Web UI + HTTP API
+      - "127.0.0.1:${INFLUXDB_PORT:-8086}:8086"
+    networks:
+      - db-network
+      - admin-network
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ── Memcached ─────────────────────────────────────────────────────────────────
+  memcached:
+    image: memcached:alpine
+    container_name: centralized-memcached
+    profiles: [memcached]
+    restart: unless-stopped
+    # -m max memory (MB)   -c max simultaneous connections
+    command: memcached -m ${MEMCACHED_MEMORY:-128} -c ${MEMCACHED_CONNECTIONS:-1024}
+    ports:
+      - "${MEMCACHED_HOST:-127.0.0.1}:${MEMCACHED_PORT:-11211}:11211"
+    networks:
+      - db-network
+    healthcheck:
+      test: ["CMD-SHELL", "echo stats | nc -w 1 127.0.0.1 11211 | grep -q 'STAT pid'"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ── Elasticsearch ─────────────────────────────────────────────────────────────
+  elasticsearch:
+    image: elasticsearch:8
+    container_name: centralized-elasticsearch
+    profiles: [elasticsearch]
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      ES_JAVA_OPTS: ${ELASTICSEARCH_JAVA_OPTS:--Xms512m -Xmx512m}
+      xpack.security.enabled: "true"
+      # Disable SSL for single-node local development
+      xpack.security.http.ssl.enabled: "false"
+      xpack.security.transport.ssl.enabled: "false"
+      ELASTIC_PASSWORD: ${ELASTICSEARCH_PASSWORD}
+      # Re-exposed so the healthcheck can use it via $$
+      ELASTICSEARCH_PASSWORD: ${ELASTICSEARCH_PASSWORD}
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    ports:
+      - "${ELASTICSEARCH_HOST:-127.0.0.1}:${ELASTICSEARCH_PORT:-9200}:9200"
+    networks:
+      - db-network
+      - admin-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -su elastic:$$ELASTICSEARCH_PASSWORD http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ── Kibana ────────────────────────────────────────────────────────────────────
+  kibana:
+    image: kibana:8
+    container_name: centralized-kibana
+    profiles: [kibana]
+    restart: unless-stopped
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+        required: false
+    environment:
+      ELASTICSEARCH_HOSTS: http://elasticsearch:9200
+      ELASTICSEARCH_USERNAME: elastic
+      ELASTICSEARCH_PASSWORD: ${ELASTICSEARCH_PASSWORD}
+      # Encryption keys must each be ≥ 32 characters.
+      # All three can share the same value for a local dev setup.
+      xpack.security.encryptionKey: ${KIBANA_ENCRYPTION_KEY}
+      xpack.encryptedSavedObjects.encryptionKey: ${KIBANA_ENCRYPTION_KEY}
+      xpack.reporting.encryptionKey: ${KIBANA_ENCRYPTION_KEY}
+    volumes:
+      - kibana-data:/usr/share/kibana/data
+    ports:
+      - "127.0.0.1:${KIBANA_PORT:-5601}:5601"
+    networks:
+      - admin-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:5601/api/status | grep -q 'available' || curl -sf http://localhost:5601 > /dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
+
+  # ── Neo4j ─────────────────────────────────────────────────────────────────────
+  neo4j:
+    image: neo4j:latest
+    container_name: centralized-neo4j
+    profiles: [neo4j]
+    restart: unless-stopped
+    environment:
+      # Format: neo4j/<password>   Password must be ≥ 8 characters.
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD}
+      # Memory tuning (optional – adjust to available RAM)
+      NEO4J_server_memory_heap_initial__size: ${NEO4J_HEAP_INITIAL:-512m}
+      NEO4J_server_memory_heap_max__size: ${NEO4J_HEAP_MAX:-512m}
+      NEO4J_server_memory_pagecache_size: ${NEO4J_PAGECACHE:-256m}
+      # Add plugins by listing them here, e.g. '["apoc"]'  (requires internet at start)
+      # NEO4J_PLUGINS: '["apoc"]'
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    ports:
+      # Browser UI
+      - "127.0.0.1:${NEO4J_HTTP_PORT:-7474}:7474"
+      # Bolt protocol (application drivers)
+      - "127.0.0.1:${NEO4J_BOLT_PORT:-7687}:7687"
+    networks:
+      - db-network
+      - admin-network
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 > /dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s

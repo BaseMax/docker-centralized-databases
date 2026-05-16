@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<!-- clickhouse/users/users.d/default-settings.xml -->
+<!-- Mounted read-only as /etc/clickhouse-server/users.d/default-settings.xml -->
+<!-- Restricts the built-in 'default' user to localhost-only connections.    -->
+<!-- The admin user is created via CLICKHOUSE_USER / CLICKHOUSE_PASSWORD env vars. -->
+<clickhouse>
+
+    <users>
+        <default>
+            <!-- Allow the default (empty-password) user only from the loopback,
+                 so it cannot be reached from outside the container. -->
+            <networks>
+                <ip>127.0.0.1</ip>
+                <ip>::1</ip>
+            </networks>
+
+            <!-- Prevent the default user from managing other users -->
+            <access_management>0</access_management>
+
+            <!-- Sensible resource limits for the default user -->
+            <profile>default</profile>
+            <quota>default</quota>
+        </default>
+    </users>
+
+    <profiles>
+        <default>
+            <max_memory_usage>2000000000</max_memory_usage>
+            <max_execution_time>60</max_execution_time>
+            <use_uncompressed_cache>0</use_uncompressed_cache>
+            <load_balancing>random</load_balancing>
+        </default>
+    </profiles>
+
+</clickhouse>

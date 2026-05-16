@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<!-- clickhouse/config/config.d/custom.xml -->
+<!-- Mounted read-only as /etc/clickhouse-server/config.d/custom.xml -->
+<!-- Settings here override defaults in /etc/clickhouse-server/config.xml -->
+<clickhouse>
+
+    <!-- Accept connections from all interfaces inside the container.
+         Docker port bindings (127.0.0.1:8123, 127.0.0.1:9000) limit host access. -->
+    <listen_host>0.0.0.0</listen_host>
+
+    <!-- ── Logging ──────────────────────────────────────────────────────────── -->
+    <logger>
+        <!-- Reduce noise; change to 'debug' when troubleshooting -->
+        <level>warning</level>
+        <console>1</console>
+    </logger>
+
+    <!-- ── Query limits ─────────────────────────────────────────────────────── -->
+    <max_concurrent_queries>200</max_concurrent_queries>
+    <max_connections>1024</max_connections>
+
+    <!-- ── Keep-alive ───────────────────────────────────────────────────────── -->
+    <keep_alive_timeout>60</keep_alive_timeout>
+
+    <!-- ── Built-in Play UI (SQL console in the browser) ────────────────────── -->
+    <!-- Available at http://localhost:8123/play after the container starts -->
+    <http_handlers>
+        <rule>
+            <url>/play</url>
+            <methods>GET</methods>
+            <handler>
+                <type>static</type>
+                <response_content>text/html; charset=utf-8</response_content>
+            </handler>
+        </rule>
+    </http_handlers>
+
+</clickhouse>
