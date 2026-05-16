@@ -1,0 +1,33 @@
+-- mariadb/init/00-example.sql.example
+-- ─────────────────────────────────────────────────────────────────────────────
+-- HOW TO USE
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 1. Copy this file and remove the .example suffix:
+--      cp mariadb/init/00-example.sql.example mariadb/init/01-my-project.sql
+--
+-- 2. Replace every placeholder (MY_PROJECT, MY_USER, MY_PASSWORD) with real
+--    values.  Use a unique, strong password per project.
+--
+-- 3. Init scripts run automatically only on first container start (when the
+--    mariadb-data volume is empty).  To re-apply after volume already exists,
+--    run the SQL manually via phpMyAdmin or the CLI:
+--
+--      docker exec -it centralized-mariadb mariadb -u root -p
+--
+-- 4. Keep the numbered prefix (01-, 02-, …) to control execution order.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Create the project database with proper encoding.
+CREATE DATABASE IF NOT EXISTS `MY_PROJECT`
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+
+-- Create a dedicated, least-privilege user for this project.
+-- Never share the root account with application code.
+CREATE USER IF NOT EXISTS 'MY_USER'@'%'
+  IDENTIFIED BY 'MY_PASSWORD';
+
+-- Grant access only to the specific project database.
+GRANT ALL PRIVILEGES ON `MY_PROJECT`.* TO 'MY_USER'@'%';
+
+FLUSH PRIVILEGES;

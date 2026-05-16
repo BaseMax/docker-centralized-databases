@@ -1,0 +1,46 @@
+# mariadb/conf.d/custom.cnf
+# Custom MariaDB server configuration.
+# Mounted read-only at /etc/mysql/conf.d/custom.cnf inside the container.
+
+[mysqld]
+# ── Character encoding ────────────────────────────────────────────────────────
+character-set-server  = utf8mb4
+collation-server      = utf8mb4_unicode_ci
+
+# ── Security hardening ────────────────────────────────────────────────────────
+# Resolve client IPs using DNS – disabled for performance and to prevent
+# DNS-based privilege escalation.
+skip-name-resolve
+
+# Disable loading local files through LOAD DATA INFILE (prevents data exfiltration).
+local-infile = 0
+
+# Disable following symbolic links (prevents path traversal attacks).
+symbolic-links = 0
+
+# ── Performance ───────────────────────────────────────────────────────────────
+# InnoDB buffer pool – adjust to ~70 % of available RAM for a dedicated DB host.
+innodb_buffer_pool_size = 256M
+
+# Maximum simultaneous client connections.
+max_connections = 200
+
+# Disable query cache (deprecated in MariaDB 10.1+; causes contention).
+query_cache_type = 0
+
+# ── Slow query logging ────────────────────────────────────────────────────────
+slow_query_log      = 1
+slow_query_log_file = /var/log/mysql/slow.log
+long_query_time     = 2
+
+# ── Binary logging (optional – required for replication / point-in-time restore)
+# Uncomment to enable:
+# log_bin            = /var/log/mysql/mysql-bin.log
+# expire_logs_days   = 7
+# max_binlog_size    = 100M
+
+[client]
+default-character-set = utf8mb4
+
+[mysql]
+default-character-set = utf8mb4

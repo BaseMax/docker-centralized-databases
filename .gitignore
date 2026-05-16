@@ -1,0 +1,13 @@
+# ─── Secrets ──────────────────────────────────────────────────────────────────
+# NEVER commit the real .env file
+.env
+
+# ─── MariaDB data directory (if bind-mounted locally) ─────────────────────────
+mariadb/data/
+
+# ─── OS / editor artefacts ────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
