@@ -203,8 +203,7 @@ services:
     restart: unless-stopped
     # Password injected via CLI so it is never stored as plain text in redis.conf
     command: >
-      redis-server /usr/local/etc/redis/redis.conf
-      --requirepass ${REDIS_PASSWORD}
+      sh -c 'redis-server /usr/local/etc/redis/redis.conf --requirepass "$$REDIS_PASSWORD"'
     environment:
       # Also exposed as env var so the healthcheck can reference it at runtime
       REDIS_PASSWORD: ${REDIS_PASSWORD}
